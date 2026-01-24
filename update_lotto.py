@@ -66,10 +66,10 @@ def main():
                 print("   ⚠️ 날짜를 찾을 수 없습니다.")
                 break
 
-            # 당첨 번호 추출
-            balls = box.select('.ball_lotto')
+            # 당첨 번호 추출 (수정: .ball_lotto → .ball)
+            balls = box.select('.ball')
             if len(balls) < 7:
-                print("   ⚠️ 공 번호를 모두 찾지 못했습니다.")
+                print(f"   ⚠️ 공 번호를 모두 찾지 못했습니다. (찾은 개수: {len(balls)})")
                 break
                 
             numbers = [int(b.text) for b in balls[:6]]
@@ -85,6 +85,7 @@ def main():
             # 5. 저장
             supabase.table("lotto_draws").insert(insert_data).execute()
             print(f"   ✅ {target}회차 ({date_str}) 저장 완료!")
+            print(f"      번호: {numbers} + 보너스: {bonus}")
             time.sleep(1)
             
         except Exception as e:
