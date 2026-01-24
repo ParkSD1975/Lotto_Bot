@@ -1,8 +1,9 @@
 import os
 import time
 import requests
-import json
+from bs4 import BeautifulSoup
 from supabase import create_client
+import re
 
 def main():
     # 1. 환경변수 확인
@@ -26,50 +27,65 @@ def main():
 
     # 3. 사람인 척 위장하기 (헤더 추가)
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.dhlottery.co.kr/',
-        'Accept': 'application/json, text/javascript, */*; q=0.01'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
 
-    # 4. 다음 회차 조회
+    # 4. 다음(Daum) 검색으로 데이터 가져오기
     for i in range(1, 6):
         target = max_round + i
-        print(f"🔍 {target}회차 요청 중 (공식 API)...")
+        print(f"🔍 {target}회차 검색 중 (Daum)...")
         
         try:
-            # 헤더를 같이 보냅니다 (headers=headers)
-            api_url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={target}"
-            resp = requests.get(api_url, headers=headers, timeout=10)
+            # 다음 검색 URL
+            search_url = f"https://search.daum.net/search?w=tot&q={target}회+로또"
+            resp = requests.get(search_url, headers=headers)
+            soup = BeautifulSoup(resp.text, 'html.parser')
+
+            # 로또 정보 박스 찾기
+            box = soup.select_one('#lottoColl')
             
-            # 응답이 JSON인지 확인
-            try:
-                data = resp.json()
-            except ValueError:
-                print("   🚨 서버에서 차단당했거나 잘못된 응답입니다. (HTML 반환됨)")
+            # 박스가 없으면 아직 추첨 전
+            if not box:
+                print(f"   📌 {target}회차 검색 결과가 없습니다.")
                 break
             
-            # 결과 확인
-            if data.get("returnValue") != "success":
-                print(f"   📌 {target}회차는 아직 결과가 없습니다.")
+            # 텍스트 검증 (검색 결과가 엉뚱한 거면 스킵)
+            text_content = box.text
+            if f"{target}회" not in text_content:
+                print(f"   ⚠️ 검색 결과가 정확하지 않아 건너뜁니다.")
                 break
 
-            # 데이터 정리
-            numbers = [
-                data["drwtNo1"], data["drwtNo2"], data["drwtNo3"],
-                data["drwtNo4"], data["drwtNo5"], data["drwtNo6"]
-            ]
+            # 날짜 추출 (2026.01.24 형태 찾기)
+            date_element = box.select_one('.date')
+            date_text = date_element.text if date_element else ""
+            date_match = re.search(r'(\d{4})\.(\d{2})\.(\d{2})', date_text)
             
+            if date_match:
+                date_str = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+            else:
+                print("   ⚠️ 날짜를 찾을 수 없습니다.")
+                break
+
+            # 당첨 번호 추출
+            balls = box.select('.ball_lotto')
+            if len(balls) < 7:
+                print("   ⚠️ 공 번호를 모두 찾지 못했습니다.")
+                break
+                
+            numbers = [int(b.text) for b in balls[:6]]
+            bonus = int(balls[6].text)
+
             insert_data = {
                 "round": target,
-                "date": data["drwNoDate"],
+                "date": date_str,
                 "numbers": numbers,
-                "bonus": data["bnusNo"]
+                "bonus": bonus
             }
             
             # 5. 저장
             supabase.table("lotto_draws").insert(insert_data).execute()
-            print(f"   ✅ {target}회차 ({data['drwNoDate']}) 저장 완료!")
-            time.sleep(2) # 2초 휴식 (너무 빠르면 또 차단당함)
+            print(f"   ✅ {target}회차 ({date_str}) 저장 완료!")
+            time.sleep(1)
             
         except Exception as e:
             print(f"   ⚠️ 에러 발생: {e}")
