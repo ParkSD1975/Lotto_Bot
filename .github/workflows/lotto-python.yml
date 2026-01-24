@@ -1,0 +1,25 @@
+name: Lotto Update (Python)
+
+on:
+  push:
+  workflow_dispatch:
+  schedule:
+    - cron: '35 12 * * 6'
+
+jobs:
+  run-lotto-python:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run Update Script
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python update_lotto.py
