@@ -24,18 +24,31 @@ def main():
     
     print(f"📊 현재 DB 마지막 회차: {max_round}회")
 
-    # 3. 다음 회차 조회 (동행복권 공식 API 사용)
+    # 3. 사람인 척 위장하기 (헤더 추가)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.dhlottery.co.kr/',
+        'Accept': 'application/json, text/javascript, */*; q=0.01'
+    }
+
+    # 4. 다음 회차 조회
     for i in range(1, 6):
         target = max_round + i
         print(f"🔍 {target}회차 요청 중 (공식 API)...")
         
         try:
-            # 동행복권 공식 주소
+            # 헤더를 같이 보냅니다 (headers=headers)
             api_url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={target}"
-            resp = requests.get(api_url)
-            data = resp.json()
+            resp = requests.get(api_url, headers=headers, timeout=10)
             
-            # 결과 확인 (success가 아니면 아직 추첨 전)
+            # 응답이 JSON인지 확인
+            try:
+                data = resp.json()
+            except ValueError:
+                print("   🚨 서버에서 차단당했거나 잘못된 응답입니다. (HTML 반환됨)")
+                break
+            
+            # 결과 확인
             if data.get("returnValue") != "success":
                 print(f"   📌 {target}회차는 아직 결과가 없습니다.")
                 break
@@ -53,10 +66,10 @@ def main():
                 "bonus": data["bnusNo"]
             }
             
-            # 4. 저장
+            # 5. 저장
             supabase.table("lotto_draws").insert(insert_data).execute()
             print(f"   ✅ {target}회차 ({data['drwNoDate']}) 저장 완료!")
-            time.sleep(1)
+            time.sleep(2) # 2초 휴식 (너무 빠르면 또 차단당함)
             
         except Exception as e:
             print(f"   ⚠️ 에러 발생: {e}")
