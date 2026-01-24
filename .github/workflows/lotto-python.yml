@@ -12,15 +12,21 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-          
+
       - name: Install dependencies
         run: pip install -r requirements.txt
-        
+
+      - name: Fix Missing Features
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python fix_missing_features.py
+
       - name: Run Lotto Update Script
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
