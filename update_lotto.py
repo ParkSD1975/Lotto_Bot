@@ -66,8 +66,10 @@ def main():
                 print("   ⚠️ 날짜를 찾을 수 없습니다.")
                 break
 
-            # 당첨 번호 추출 (수정: .ball_lotto → .ball)
-            balls = box.select('.ball')
+            # 당첨 번호 추출 (숫자만 있는 .ball 요소만 필터링)
+            all_balls = box.select('.ball')
+            balls = [b for b in all_balls if b.text.strip().isdigit()]
+            
             if len(balls) < 7:
                 print(f"   ⚠️ 공 번호를 모두 찾지 못했습니다. (찾은 개수: {len(balls)})")
                 break
