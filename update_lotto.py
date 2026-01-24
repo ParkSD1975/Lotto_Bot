@@ -1,9 +1,8 @@
 import os
 import time
 import requests
-from bs4 import BeautifulSoup
+import json
 from supabase import create_client, Client
-from datetime import datetime
 
 # 환경변수 로드
 url = os.environ.get("SUPABASE_URL")
@@ -16,47 +15,41 @@ if not url or not key:
 supabase = create_client(url, key)
 
 def main():
-    # 1. 마지막 회차 조회
+    # 1. DB에서 가장 마지막 회차 조회
     try:
         res = supabase.table("lotto_draws").select("round").order("round", desc=True).limit(1).execute()
         max_round = res.data[0]['round'] if res.data else 0
     except:
         max_round = 0
+    
+    print(f"📊 현재 DB 마지막 회차: {max_round}회")
 
-    print(f"📊 DB 마지막 회차: {max_round}회")
-
-    # 2. 다음 3회차 조회
-    for i in range(1, 4):
+    # 2. 다음 회차 조회 (동행복권 공식 API 사용)
+    # 한 번에 5회차까지 넉넉하게 체크
+    for i in range(1, 5):
         target = max_round + i
-        print(f"🔍 {target}회차 검색 중...")
-
+        print(f"🔍 {target}회차 데이터 요청 중 (동행복권)...")
+        
         try:
-            # 다음(Daum) 검색
-            resp = requests.get(f"https://search.daum.net/search?w=tot&q={target}회+로또")
-            soup = BeautifulSoup(resp.text, 'html.parser')
-
-            box = soup.select_one('#lottoColl')
-            if not box:
-                print("   📌 결과 없음")
+            # 공식 API 주소 (화면 해석 필요 없이 데이터만 줌)
+            api_url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={target}"
+            resp = requests.get(api_url)
+            data = resp.json()
+            
+            # 성공 여부 확인 (returnValue가 'success'여야 함)
+            if data.get('returnValue') != 'success':
+                print(f"   📌 {target}회차는 아직 추첨 전입니다.")
                 break
+            
+            # 데이터 추출
+            numbers = [
+                data['drwtNo1'], data['drwtNo2'], data['drwtNo3'],
+                data['drwtNo4'], data['drwtNo5'], data['drwtNo6']
+            ]
+            bonus = data['bnusNo']
+            date_str = data['drwNoDate'] # 형식: 2026-01-24
 
-            balls = [int(b.text) for b in box.select('.ball_lotto')]
-            date_text = box.select_one('.date').text
-
-            # 날짜 변환
-            import re
-            d = re.search(r'(\d{4})\.(\d{2})\.(\d{2})', date_text)
-            date_str = f"{d.group(1)}-{d.group(2)}-{d.group(3)}" if d else datetime.now().strftime("%Y-%m-%d")
-
-            data = {"round": target, "date": date_str, "numbers": balls[:6], "bonus": balls[6]}
-
-            supabase.table("lotto_draws").insert(data).execute()
-            print(f"   ✅ {target}회차 저장 완료!")
-            time.sleep(1)
-
-        except Exception:
-            print("   ⚠️ 아직 추첨 전이거나 에러")
-            break
-
-if __name__ == "__main__":
-    main()
+            insert_data = {
+                "round": target,
+                "date": date_str,
+                "numbers
