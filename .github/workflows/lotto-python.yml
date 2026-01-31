@@ -5,22 +5,36 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
   schedule:
-    - cron: '35 12 * * 6'
+    - cron: '35 12 * * 6'  # 매주 토요일 21:35 KST (UTC 12:35)
 
 jobs:
   update-db:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: 저장소 코드 가져오기 (Checkout)
+        uses: actions/checkout@v3
+
+      - name: 파이썬 설정하기 (Set up Python)
+        uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-      - name: Install dependencies
+
+      - name: 라이브러리 설치하기 (Install dependencies)
         run: |
-          pip install requests beautifulsoup4 supabase
-      - name: Run Update Script
+          python -m pip install --upgrade pip
+          # requirements.txt가 있으면 설치하고, 없으면 직접 필요한 패키지 설치
+          if [ -f requirements.txt ]; then 
+            pip install -r requirements.txt
+          else
+            pip install requests beautifulsoup4 supabase
+          fi
+
+      - name: 로또 데이터 및 분석 테이블 업데이트 실행 (Run Update Script)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          python update_lotto.py  # 명칭을 파일명과 일치시킴
+          # 파일명이 update_lotto.py인지 다시 한번 확인하세요.
+          # lotto_draws, number_round_stats, regression_details를 모두 업데이트합니다.
+          python update_lotto.py
