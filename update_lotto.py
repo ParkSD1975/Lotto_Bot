@@ -8,145 +8,88 @@ import re
 # ============================================================
 # 설정 및 상수
 # ============================================================
-PRIMES = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43}
-
 def get_hot_cold_status_legacy(count, period):
-    """기존 hot_cold.html 호환용 상태 판별"""
     if period == 5:
-        if count >= 2: return 'hot'
-        elif count >= 1: return 'neutral'
-        else: return 'cold'
+        return 'hot' if count >= 2 else ('neutral' if count >= 1 else 'cold')
     elif period == 10:
-        if count >= 3: return 'hot'
-        elif count >= 1: return 'neutral'
-        else: return 'cold'
+        return 'hot' if count >= 3 else ('neutral' if count >= 1 else 'cold')
     elif period == 15:
-        if count >= 4: return 'hot'
-        elif count >= 2: return 'neutral'
-        else: return 'cold'
+        return 'hot' if count >= 4 else ('neutral' if count >= 2 else 'cold')
     else: # 20
-        if count >= 5: return 'hot'
-        elif count >= 2: return 'neutral'
-        else: return 'cold'
+        return 'hot' if count >= 5 else ('neutral' if count >= 2 else 'cold')
 
 def main():
-    # 1. 환경변수 확인
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_KEY")
-
     if not url or not key:
-        print("❌ 오류: Supabase 환경변수(URL/KEY)가 없습니다.")
+        print("❌ 오류: Supabase 환경변수가 없습니다.")
         return
-
     supabase = create_client(url, key)
 
-    # 2. DB에서 최신 회차 확인
-    try:
-        res = supabase.table("lotto_draws").select("round").order("round", desc=True).limit(1).execute()
-        max_round = res.data[0]['round'] if res.data else 0
-    except Exception as e:
-        print(f"⚠️ DB 연결/조회 오류: {e}")
-        max_round = 0
+    # 1. DB 상태 확인
+    res_draws = supabase.table("lotto_draws").select("round").order("round", desc=True).limit(1).execute()
+    max_draw = res_draws.data[0]['round'] if res_draws.data else 0
     
-    print(f"📊 현재 DB 마지막 회차: {max_round}회")
-
-    # 3. 새로운 회차 크롤링 (Daum 검색)
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-
-    new_rounds_data = []
-
-    for i in range(1, 6):
-        target = max_round + i
-        print(f"🔍 {target}회차 검색 중 (Daum)...")
+    # 2. 신규 회차 크롤링 (Daum)
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
+    target_round = max_draw + 1
+    print(f"🔍 {target_round}회차 크롤링 시도...")
+    
+    try:
+        search_url = f"https://search.daum.net/search?w=tot&q={target_round}회+로또"
+        resp = requests.get(search_url, headers=headers)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        box = soup.select_one('#lottoColl')
         
-        try:
-            search_url = f"https://search.daum.net/search?w=tot&q={target}회+로또"
-            resp = requests.get(search_url, headers=headers)
-            soup = BeautifulSoup(resp.text, 'html.parser')
-
-            box = soup.select_one('#lottoColl')
-            if not box or f"{target}회" not in box.text:
-                print(f"   📌 {target}회차 정보가 아직 없습니다.")
-                break
-
-            # 날짜 및 번호 파싱
-            date_element = box.select_one('.date')
-            date_text = date_element.text if date_element else ""
-            date_match = re.search(r'(\d{4})\.(\d{2})\.(\d{2})', date_text)
-            date_str = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}" if date_match else ""
-
-            all_balls = box.select('.ball')
-            balls = [b for b in all_balls if b.text.strip().isdigit()]
+        if box and f"{target_round}회" in box.text:
+            date_match = re.search(r'(\d{4})\.(\d{2})\.(\d{2})', box.select_one('.date').text)
+            date_str = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+            balls = [int(b.text) for b in box.select('.ball') if b.text.strip().isdigit()]
             
-            if len(balls) < 7:
-                print("   ⚠️ 공 번호 파싱 실패")
-                break
-                
-            numbers = [int(b.text) for b in balls[:6]]
-            bonus = int(balls[6].text)
-
-            draw_data = {
-                "round": target,
-                "date": date_str,
-                "numbers": numbers,
-                "bonus": bonus
-            }
-            
+            draw_data = {"round": target_round, "date": date_str, "numbers": balls[:6], "bonus": balls[6]}
             supabase.table("lotto_draws").insert(draw_data).execute()
-            print(f"   ✅ {target}회차 원천 데이터 저장 완료")
-            
-            new_rounds_data.append(draw_data)
-            time.sleep(1)
-            
-        except Exception as e:
-            print(f"   ⚠️ 크롤링 에러: {e}")
-            break
+            print(f"✅ {target_round}회차 당첨번호 저장 완료")
+            max_draw = target_round
+    except Exception as e:
+        print(f"ℹ️ 신규 회차 없음 또는 에러: {e}")
 
-    # 4. 분석 데이터 생성 (number_features_by_round 업데이트)
-    if new_rounds_data:
-        print(f"\n📈 {len(new_rounds_data)}개 신규 회차 분석 중...")
-        res_all = supabase.table("lotto_draws").select("*").order("round", desc=True).limit(300).execute()
-        past_draws = res_all.data 
-
-        for new_draw in new_rounds_data:
-            curr_round = new_draw['round']
-            curr_nums = set(new_draw['numbers'])
-            prev_draw = next((d for d in past_draws if d['round'] == curr_round - 1), None)
+    # 3. 누락된 분석 데이터(1209회 포함) 생성 로직
+    res_feats = supabase.table("number_features_by_round").select("round").order("round", desc=True).limit(1).execute()
+    max_feat = res_feats.data[0]['round'] if res_feats.data else 0
+    
+    if max_draw > max_feat:
+        missing_rounds = list(range(max_feat + 1, max_draw + 1))
+        print(f"⚠️ 분석 누락 발견: {missing_rounds}회차 계산 시작...")
+        
+        # 분석을 위한 과거 데이터 로드
+        all_past = supabase.table("lotto_draws").select("*").order("round", desc=True).limit(300).execute().data
+        
+        for r in missing_rounds:
+            curr_draw = next(d for d in all_past if d['round'] == r)
+            curr_nums = set(curr_draw['numbers'])
+            prev_draw = next((d for d in all_past if d['round'] == r - 1), None)
             prev_nums = set(prev_draw['numbers']) if prev_draw else set()
-
-            features_rows = []
-            for num in range(1, 46):
-                draws_before = [d for d in past_draws if d['round'] < curr_round]
+            
+            features = []
+            for n in range(1, 46):
+                before = [d for d in all_past if d['round'] < r]
+                f10 = sum(1 for d in before[:10] if n in d['numbers'])
                 
-                freq_5 = sum(1 for d in draws_before[:5] if num in d['numbers'])
-                freq_10 = sum(1 for d in draws_before[:10] if num in d['numbers'])
-                freq_15 = sum(1 for d in draws_before[:15] if num in d['numbers'])
-                freq_20 = sum(1 for d in draws_before[:20] if num in d['numbers'])
-
                 row = {
-                    "round": curr_round,
-                    "number": num,
-                    "hot_cold": get_hot_cold_status_legacy(freq_10, 10),
-                    "appearance_count_5": freq_5,
-                    "appearance_count_10": freq_10,
-                    "appearance_count_15": freq_15,
-                    "appearance_count_20": freq_20,
-                    "is_carryover": num in prev_nums,
-                    "is_winning": num in curr_nums,
-                    "is_bonus": num == new_draw['bonus']
+                    "round": r, "number": n, "is_winning": n in curr_nums,
+                    "hot_cold": get_hot_cold_status_legacy(f10, 10),
+                    "is_carryover": n in prev_nums,
+                    "appearance_count_10": f10,
+                    "is_bonus": n == curr_draw['bonus']
                 }
-                # 회귀 컬럼 추가 (필요한 경우)
-                for dist in [2, 3, 4, 5, 10, 20, 30, 40, 50, 100, 200]:
-                    target_r = curr_round - dist
-                    src_d = next((d for d in past_draws if d['round'] == target_r), None)
-                    row[f"regression_{dist}"] = (num in src_d['numbers']) if src_d else False
-                
-                features_rows.append(row)
-
-            supabase.table("number_features_by_round").insert(features_rows).execute()
-            print(f"   ✅ {curr_round}회차 분석 데이터 저장 완료")
+                # 회귀 컬럼 자동 생성
+                for d_dist in [2, 3, 4, 5, 10, 20, 30, 40, 50, 100, 200]:
+                    src = next((pd for pd in all_past if pd['round'] == r - d_dist), None)
+                    row[f"regression_{d_dist}"] = (n in src['numbers']) if src else False
+                features.append(row)
+            
+            supabase.table("number_features_by_round").insert(features).execute()
+            print(f"✅ {r}회차 분석 데이터(45개 번호) 동기화 완료")
 
 if __name__ == "__main__":
     main()
