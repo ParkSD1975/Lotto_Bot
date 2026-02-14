@@ -4,14 +4,25 @@ from bs4 import BeautifulSoup
 from supabase import create_client
 import re
 from datetime import datetime
+import time
 
 # ============================================================
 # [헬퍼 함수] 분석용 로직
 # ============================================================
 def get_hot_cold_status(count, period):
-    if period == 10:
-        return 'hot' if count >= 3 else ('cold' if count == 0 else 'warm')
-    return 'warm'
+    if period == 5: # 5회차 기준
+        if count >= 2: return 'hot'
+        if count == 0: return 'cold'
+    elif period == 10: # 10회차 기준
+        if count >= 3: return 'hot'
+        if count == 0: return 'cold' 
+    elif period == 15: # 15회차 기준
+        if count >= 4: return 'hot'
+        if count <= 1: return 'cold'
+    elif period == 20: # 20회차 기준
+        if count >= 5: return 'hot'
+        if count <= 1: return 'cold'
+    return 'warm' # 그 외
 
 def is_twin_number(number):
     return number > 10 and (number % 10 == number // 10)
@@ -20,7 +31,7 @@ def get_missing_count(number, all_draws, current_round):
     for draw in all_draws:
         if draw['round'] < current_round and number in draw['numbers']:
             return current_round - draw['round'] - 1
-    return current_round - 1
+    return current_round - 1 # 한번도 안나왔으면 현재회차-1 (1회차부터 미출현)
 
 def get_last_appearance_round(number, all_draws, current_round):
     for draw in all_draws:
@@ -37,6 +48,7 @@ def fetch_lotto_data(target_round):
         'Referer': 'https://www.dhlottery.co.kr/'
     }
     today_str = datetime.now().strftime('%Y-%m-%d')
+    print(f"🔍 {target_round}회차 데이터 조회 시도...")
 
     # 1. API 
     try:
@@ -44,131 +56,211 @@ def fetch_lotto_data(target_round):
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200 and 'application/json' in resp.headers.get('Content-Type', ''):
             data = resp.json()
-            if data.get(\"returnValue\") == \"success\":
+            if data.get("returnValue") == "success": # Syntax Fixed: Removed escaped quotes
+                print("   ✅ [API] 데이터 확보 성공")
                 return {
-                    \"round\": target_round,
-                    \"date\": data.get(\"drwNoDate\", today_str),
-                    \"numbers\": [data[f\"drwtNo{i}\"] for i in range(1, 7)],
-                    \"bonus\": data.get(\"bnusNo\")
+                    "round": target_round,
+                    "date": data.get("drwNoDate", today_str),
+                    "numbers": [data[f"drwtNo{i}"] for i in range(1, 7)],
+                    "bonus": data.get("bnusNo")
                 }
-    except: pass
+    except Exception as e: 
+        print(f"   ⚠️ [API] 실패: {e}")
 
     # 2. Naver
     try:
-        url = f\"https://search.naver.com/search.naver?query={target_round}회+로또\"
+        url = f"https://search.naver.com/search.naver?query={target_round}회+로또"
         resp = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(resp.text, 'html.parser')
         container = soup.select_one('.lotto_win_number')
         if container:
             balls = [int(b.text) for b in container.select('.ball')]
-            date_text = soup.select_one('.sub_title').text if soup.select_one('.sub_title') else \"\"
-            date_match = re.search(r'(\\d{4})[./\\-](\\d{2})[./\\-](\\d{2})', date_text)
-            date_str = f\"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}\" if date_match else today_str
+            date_text = soup.select_one('.sub_title').text if soup.select_one('.sub_title') else ""
+            date_match = re.search(r'(\d{4})[./\-](\d{2})[./\-](\d{2})', date_text)
+            date_str = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}" if date_match else today_str
             if len(balls) >= 7:
-                return {\"round\": target_round, \"date\": date_str, \"numbers\": balls[:6], \"bonus\": balls[6]}
-    except: pass
+                print("   ✅ [Naver] 데이터 확보 성공")
+                return {"round": target_round, "date": date_str, "numbers": balls[:6], "bonus": balls[6]}
+    except Exception as e:
+        print(f"   ⚠️ [Naver] 실패: {e}")
 
     # 3. Daum
     try:
-        url = f\"https://search.daum.net/search?w=tot&q={target_round}회+로또\"
+        url = f"https://search.daum.net/search?w=tot&q={target_round}회+로또"
         resp = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(resp.text, 'html.parser')
         box = soup.select_one('#lottoColl')
         if box:
             balls = [int(b.text) for b in box.select('.ball') if b.text.strip().isdigit()]
             if len(balls) >= 7:
-                return {\"round\": target_round, \"date\": today_str, \"numbers\": balls[:6], \"bonus\": balls[6]}
-    except: pass
+                print("   ✅ [Daum] 데이터 확보 성공")
+                return {"round": target_round, "date": today_str, "numbers": balls[:6], "bonus": balls[6]}
+    except Exception as e:
+        print(f"   ⚠️ [Daum] 실패: {e}")
+        
+    print(f"   ❌ {target_round}회차 정보 없음")
     return None
 
 def main():
-    url = os.environ.get(\"SUPABASE_URL\")
-    key = os.environ.get(\"SUPABASE_KEY\")
-    if not url or not key: return
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
+    if not url or not key: 
+        print("❌ Supabase 환경변수 누락")
+        return
     supabase = create_client(url, key)
 
     # 1. 최신 회차 동기화
-    res = supabase.table(\"lotto_draws\").select(\"round\").order(\"round\", desc=True).limit(1).execute()
+    res = supabase.table("lotto_draws").select("round").order("round", desc=True).limit(1).execute()
     max_db = res.data[0]['round'] if res.data else 0
     target = max_db + 1
     
-    print(f\"🔍 목표 회차: {target}회\")
-    new_data = fetch_lotto_data(target)
-    if new_data:
-        supabase.table(\"lotto_draws\").upsert(new_data).execute()
-        print(f\"✅ {target}회 당첨번호 저장 완료\")
-        max_db = target
+    # 3회차 여유분 체크 (혹시 밀렸을 경우)
+    for i in range(3):
+        curr_target = target + i
+        print(f"\n===== [ {curr_target}회차 작업 시작 ] =====")
+        
+        new_data = fetch_lotto_data(curr_target)
+        if new_data:
+            try:
+                supabase.table("lotto_draws").upsert(new_data).execute()
+                print(f"   💾 lotto_draws 저장 완료")
+                max_db = curr_target # 업데이트 성공 시 기준점 이동
+            except Exception as e:
+                print(f"   ℹ️ 저장 스킵: {e}")
+        else:
+            print("   🏁 더 이상 새로운 회차가 없습니다.")
+            break
 
-    # 2. 분석용 데이터 벌크 로드 (과거 데이터 매핑)
-    all_draws = supabase.table(\"lotto_draws\").select(\"*\").order(\"round\", desc=True).limit(500).execute().data
+    # 2. 분석용 데이터 벌크 로드 (과거 500회분 - 분석에 필요)
+    print("\n🔄 분석용 과거 데이터 로드 중...")
+    all_draws_res = supabase.table("lotto_draws").select("*").order("round", desc=True).limit(500).execute()
+    all_draws = all_draws_res.data if all_draws_res.data else []
     draws_map = {d['round']: d for d in all_draws}
+    print(f"   ✅ {len(all_draws)}개 회차 데이터 메모리 로드 완료")
 
     # 3. 테이블별 업데이트 루프 (Stats, Regression, Features)
+    # 각 테이블별로 어디까지 업데이트 되었는지 확인하고, max_db까지 채워넣음
     tables = [
-        {\"name\": \"number_round_stats\", \"pk\": \"round\"},
-        {\"name\": \"regression_details\", \"pk\": \"target_round\"},
-        {\"name\": \"number_features_by_round\", \"pk\": \"round\"}
+        {"name": "number_round_stats", "pk": "round"},
+        {"name": "regression_details", "pk": "target_round"},
+        {"name": "number_features_by_round", "pk": "round"}
     ]
 
     for table in tables:
+        print(f"\n📊 [{table['name']}] 동기화 점검...")
         res_t = supabase.table(table['name']).select(table['pk']).order(table['pk'], desc=True).limit(1).execute()
         max_t = res_t.data[0][table['pk']] if res_t.data else 0
         
         if max_db > max_t:
+            print(f"   👉 {max_t + 1}회 ~ {max_db}회 데이터 생성 필요")
+            
             for r in range(max_t + 1, max_db + 1):
                 curr = draws_map.get(r)
-                if not curr: continue
+                if not curr: 
+                    print(f"   ⚠️ {r}회차 원본 데이터(lotto_draws)가 메모리에 없음. 건너뜀.")
+                    continue
                 
                 curr_nums = set(curr['numbers'])
+                # r회차 이전 데이터들
                 prev_draws = [d for d in all_draws if d['round'] < r]
                 prev_1 = draws_map.get(r-1)
                 
-                if table['name'] == \"number_round_stats\":
+                # A. number_round_stats
+                if table['name'] == "number_round_stats":
                     batch = []
                     for n in range(1, 46):
                         gap = 0
                         for pd in prev_draws:
                             if n in pd['numbers']: break
                             gap += 1
+                        
+                        # 기간별 빈도
+                        f5 = sum(1 for d in prev_draws[:5] if n in d['numbers'])
                         f10 = sum(1 for d in prev_draws[:10] if n in d['numbers'])
-                        reg_hit = sum(1 for d in range(2, 201) if (r-d) in draws_map and n in draws_map[r-d]['numbers'])
-                        batch.append({\"round\": r, \"number\": n, \"gap\": gap, \"freq_10\": f10, \"hot_cold_10\": get_hot_cold_status(f10, 10), \"regression_hit_count\": reg_hit, \"is_winner\": n in curr_nums})
-                    supabase.table(\"number_round_stats\").insert(batch).execute()
+                        f15 = sum(1 for d in prev_draws[:15] if n in d['numbers'])
+                        f20 = sum(1 for d in prev_draws[:20] if n in d['numbers'])
 
-                elif table['name'] == \"regression_details\":
+                        # 회귀 적중 (2~200)
+                        reg_hit = 0
+                        for dist in range(2, 201):
+                            if (r-dist) in draws_map and n in draws_map[r-dist]['numbers']:
+                                reg_hit += 1
+                        
+                        batch.append({
+                            "round": r, 
+                            "number": n, 
+                            "gap": gap, 
+                            "freq_5": f5,
+                            "freq_10": f10,
+                            "freq_15": f15,
+                            "freq_20": f20,
+                            "hot_cold_5": get_hot_cold_status(f5, 5),
+                            "hot_cold_10": get_hot_cold_status(f10, 10),
+                            "hot_cold_15": get_hot_cold_status(f15, 15),
+                            "hot_cold_20": get_hot_cold_status(f20, 20),
+                            "regression_hit_count": reg_hit, 
+                            "is_winner": n in curr_nums
+                        })
+                    supabase.table("number_round_stats").insert(batch).execute()
+
+                # B. regression_details
+                elif table['name'] == "regression_details":
                     reg_batch = []
                     for dist in range(2, 201):
                         src_r = r - dist
                         if src_r in draws_map:
                             src_nums = draws_map[src_r]['numbers']
                             matches = list(curr_nums.intersection(set(src_nums)))
-                            reg_batch.append({\"target_round\": r, \"regression_distance\": dist, \"source_round\": src_r, \"source_numbers\": src_nums, \"matching_numbers\": matches, \"match_count\": len(matches)})
-                    supabase.table(\"regression_details\").insert(reg_batch).execute()
+                            reg_batch.append({
+                                "target_round": r, 
+                                "regression_distance": dist, 
+                                "source_round": src_r, 
+                                "source_numbers": src_nums, 
+                                "matching_numbers": matches, 
+                                "match_count": len(matches)
+                            })
+                    # 200개 row insert 가 꽤 크므로 나눠서 넣거나 그냥 넣음 (Supabase는 보통 수백개 OK)
+                    if reg_batch:
+                        supabase.table("regression_details").insert(reg_batch).execute()
 
-                elif table['name'] == \"number_features_by_round\":
+                # C. number_features_by_round
+                elif table['name'] == "number_features_by_round":
                     feat_batch = []
                     neighbor_set = set()
                     if prev_1:
                         for n in prev_1['numbers']:
                             if n-1>=1: neighbor_set.add(n-1)
                             if n+1<=45: neighbor_set.add(n+1)
-                        for n in prev_1['numbers']: neighbor_set.discard(n)
+                        # 당첨번호 본인은 제외? 보통 이웃수는 본인 제외 양옆. (JS로직 따름)
+                        for n in prev_1['numbers']: 
+                             if n in neighbor_set: neighbor_set.discard(n)
                     
                     for n in range(1, 46):
-                        f = {\"round\": r, \"number\": n, \"hot_cold\": get_hot_cold_status(sum(1 for d in prev_draws[:10] if n in d['numbers']), 10),
-                             \"appearance_count_5\": sum(1 for d in prev_draws[:5] if n in d['numbers']),
-                             \"appearance_count_10\": sum(1 for d in prev_draws[:10] if n in d['numbers']),
-                             \"is_neighbor\": n in neighbor_set, \"is_twin\": is_twin_number(n),
-                             \"missing_count\": get_missing_count(n, prev_draws, r), \"is_carryover\": n in (set(prev_1['numbers']) if prev_1 else set()),
-                             \"is_winning\": n in curr_nums, \"is_bonus\": n == curr['bonus']}
-                        for dist in [2, 3, 4, 5, 10, 20, 50, 100]: # 주요 회귀선만 우선 추가 (성능상)
-                            f[f\"regression_{dist}\"] = (r-dist) in draws_map and n in draws_map[r-dist]['numbers']
+                        f = {
+                            "round": r, 
+                            "number": n, 
+                            "hot_cold": get_hot_cold_status(sum(1 for d in prev_draws[:10] if n in d['numbers']), 10),
+                            "appearance_count_5": sum(1 for d in prev_draws[:5] if n in d['numbers']),
+                            "appearance_count_10": sum(1 for d in prev_draws[:10] if n in d['numbers']),
+                            "is_neighbor": n in neighbor_set, 
+                            "is_twin": is_twin_number(n),
+                            "missing_count": get_missing_count(n, prev_draws, r), 
+                            "is_carryover": n in (set(prev_1['numbers']) if prev_1 else set()),
+                            "is_winning": n in curr_nums, 
+                            "is_bonus": n == curr['bonus']
+                        }
+                        # 주요 회귀선 여부
+                        for dist in [2, 3, 4, 5, 10, 20, 50, 100]: 
+                            f[f"regression_{dist}"] = (r-dist) in draws_map and n in draws_map[r-dist]['numbers']
+                        
                         feat_batch.append(f)
-                    supabase.table(\"number_features_by_round\").insert(feat_batch).execute()
+                    supabase.table("number_features_by_round").insert(feat_batch).execute()
                 
-                print(f\"📊 {table['name']} - {r}회 업데이트 완료\")
+                print(f"      ✅ {r}회차 데이터 생성 완료")
+        else:
+            print("   ✨ 최신 상태입니다.")
 
-    print(\"🎉 모든 분석 동기화가 완료되었습니다!\")
+    print("\n🎉 모든 분석 동기화가 완료되었습니다!")
 
-if __name__ == \"__main__\":
+if __name__ == "__main__":
     main()
