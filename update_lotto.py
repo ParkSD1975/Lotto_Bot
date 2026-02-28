@@ -56,7 +56,7 @@ def fetch_lotto_data(target_round):
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200 and 'application/json' in resp.headers.get('Content-Type', ''):
             data = resp.json()
-            if data.get("returnValue") == "success": # Syntax Fixed: Removed escaped quotes
+            if data.get("returnValue") == "success": 
                 print("   ✅ [API] 데이터 확보 성공")
                 return {
                     "round": target_round,
@@ -64,6 +64,10 @@ def fetch_lotto_data(target_round):
                     "numbers": [data[f"drwtNo{i}"] for i in range(1, 7)],
                     "bonus": data.get("bnusNo")
                 }
+            elif data.get("returnValue") == "fail":
+                # API가 명시적으로 실패(미추첨 등)를 반환하면 크롤링 폴백 생략
+                print(f"   ❌ [API] {target_round}회차 정보 없음 (추첨 전)")
+                return None
     except Exception as e: 
         print(f"   ⚠️ [API] 실패: {e}")
 
@@ -73,7 +77,9 @@ def fetch_lotto_data(target_round):
         resp = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(resp.text, 'html.parser')
         container = soup.select_one('.lotto_win_number')
-        if container:
+        # 중요: 실제 화면에 표기된 회차가 target_round와 일치하는지 검증
+        round_text_el = soup.select_one('a._lotto-btn-current > em')
+        if container and round_text_el and str(target_round) in round_text_el.text:
             balls = [int(b.text) for b in container.select('.ball')]
             date_text = soup.select_one('.sub_title').text if soup.select_one('.sub_title') else ""
             date_match = re.search(r'(\d{4})[./\-](\d{2})[./\-](\d{2})', date_text)
@@ -90,7 +96,9 @@ def fetch_lotto_data(target_round):
         resp = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(resp.text, 'html.parser')
         box = soup.select_one('#lottoColl')
-        if box:
+        # 중요: 실제 검색 결과의 회차가 맞는지 검증
+        tit_tot = soup.select_one('.tit_tot')
+        if box and tit_tot and str(target_round) in tit_tot.text:
             balls = [int(b.text) for b in box.select('.ball') if b.text.strip().isdigit()]
             if len(balls) >= 7:
                 print("   ✅ [Daum] 데이터 확보 성공")
