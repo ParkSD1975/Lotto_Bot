@@ -45,18 +45,25 @@ def get_last_appearance_round(number, all_draws, current_round):
 def fetch_lotto_data(target_round):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.dhlottery.co.kr/'
+        'Referer': 'https://www.dhlottery.co.kr/',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'X-Requested-With': 'XMLHttpRequest'
     }
     today_str = datetime.now().strftime('%Y-%m-%d')
     print(f"🔍 {target_round}회차 데이터 조회 시도...")
 
-    # 1. API 
+    # 1. API (세션 활용 + AJAX 헤더 → JSON 응답 유도)
     try:
+        session = requests.Session()
+        session.headers.update(headers)
+        # 세션 쿠키 취득 (리다이렉트 방지)
+        session.get('https://www.dhlottery.co.kr/', timeout=15)
         url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={target_round}"
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code == 200 and 'application/json' in resp.headers.get('Content-Type', ''):
+        resp = session.get(url, timeout=30)
+        ct = resp.headers.get('Content-Type', '')
+        if resp.status_code == 200 and 'application/json' in ct:
             data = resp.json()
-            if data.get("returnValue") == "success": 
+            if data.get("returnValue") == "success":
                 print("   ✅ [API] 데이터 확보 성공")
                 return {
                     "round": target_round,
@@ -65,21 +72,31 @@ def fetch_lotto_data(target_round):
                     "bonus": data.get("bnusNo")
                 }
             elif data.get("returnValue") == "fail":
-                # API가 명시적으로 실패(미추첨 등)를 반환하면 크롤링 폴백 생략
-                print(f"   ❌ [API] {target_round}회차 정보 없음 (추첨 전)")
-                return None
-    except Exception as e: 
+                # 추첨 전이거나 데이터 미공개 → Naver/Daum 폴백 시도
+                print(f"   ⚠️ [API] returnValue=fail → 크롤링 폴백 시도")
+        else:
+            print(f"   ⚠️ [API] JSON 아님 (Content-Type: {ct[:60]}) → 크롤링 폴백 시도")
+    except Exception as e:
         print(f"   ⚠️ [API] 실패: {e}")
 
     # 2. Naver
     try:
+        naver_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
         url = f"https://search.naver.com/search.naver?query={target_round}회+로또"
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = requests.get(url, headers=naver_headers, timeout=15)
         soup = BeautifulSoup(resp.text, 'html.parser')
         container = soup.select_one('.lotto_win_number')
         # 중요: 실제 화면에 표기된 회차가 target_round와 일치하는지 검증
         round_text_el = soup.select_one('a._lotto-btn-current > em')
-        if container and round_text_el and str(target_round) in round_text_el.text:
+        if not container:
+            print(f"   ⚠️ [Naver] .lotto_win_number 셀렉터 없음 (HTML 구조 변경 가능성)")
+        elif not round_text_el:
+            print(f"   ⚠️ [Naver] a._lotto-btn-current>em 셀렉터 없음 (HTML 구조 변경 가능성)")
+        elif str(target_round) not in round_text_el.text:
+            print(f"   ⚠️ [Naver] 회차 불일치: 검색결과='{round_text_el.text.strip()}', 요청={target_round}")
+        else:
             balls = [int(b.text) for b in container.select('.ball')]
             date_text = soup.select_one('.sub_title').text if soup.select_one('.sub_title') else ""
             date_match = re.search(r'(\d{4})[./\-](\d{2})[./\-](\d{2})', date_text)
@@ -87,22 +104,35 @@ def fetch_lotto_data(target_round):
             if len(balls) >= 7:
                 print("   ✅ [Naver] 데이터 확보 성공")
                 return {"round": target_round, "date": date_str, "numbers": balls[:6], "bonus": balls[6]}
+            else:
+                print(f"   ⚠️ [Naver] 볼 개수 부족: {len(balls)}개")
     except Exception as e:
         print(f"   ⚠️ [Naver] 실패: {e}")
 
     # 3. Daum
     try:
+        daum_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
         url = f"https://search.daum.net/search?w=tot&q={target_round}회+로또"
-        resp = requests.get(url, headers=headers, timeout=15)
+        resp = requests.get(url, headers=daum_headers, timeout=20)
         soup = BeautifulSoup(resp.text, 'html.parser')
         box = soup.select_one('#lottoColl')
         # 중요: 실제 검색 결과의 회차가 맞는지 검증
         tit_tot = soup.select_one('.tit_tot')
-        if box and tit_tot and str(target_round) in tit_tot.text:
+        if not box:
+            print(f"   ⚠️ [Daum] #lottoColl 셀렉터 없음 (HTML 구조 변경 가능성)")
+        elif not tit_tot:
+            print(f"   ⚠️ [Daum] .tit_tot 셀렉터 없음 (HTML 구조 변경 가능성)")
+        elif str(target_round) not in tit_tot.text:
+            print(f"   ⚠️ [Daum] 회차 불일치: 검색결과='{tit_tot.text.strip()[:30]}', 요청={target_round}")
+        else:
             balls = [int(b.text) for b in box.select('.ball') if b.text.strip().isdigit()]
             if len(balls) >= 7:
                 print("   ✅ [Daum] 데이터 확보 성공")
                 return {"round": target_round, "date": today_str, "numbers": balls[:6], "bonus": balls[6]}
+            else:
+                print(f"   ⚠️ [Daum] 볼 개수 부족: {len(balls)}개")
     except Exception as e:
         print(f"   ⚠️ [Daum] 실패: {e}")
         
