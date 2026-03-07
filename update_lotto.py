@@ -79,7 +79,7 @@ def fetch_lotto_data(target_round):
     except Exception as e:
         print(f"   ⚠️ [API] 실패: {e}")
 
-    # 2. Naver
+    # 2. Naver 검색 (새 HTML 구조: .cs_lotto → .winning_number/.bonus_number)
     try:
         naver_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -87,29 +87,31 @@ def fetch_lotto_data(target_round):
         url = f"https://search.naver.com/search.naver?query={target_round}회+로또"
         resp = requests.get(url, headers=naver_headers, timeout=15)
         soup = BeautifulSoup(resp.text, 'html.parser')
-        container = soup.select_one('.lotto_win_number')
+        lotto_box = soup.select_one('.cs_lotto')
         # 중요: 실제 화면에 표기된 회차가 target_round와 일치하는지 검증
-        round_text_el = soup.select_one('a._lotto-btn-current > em')
-        if not container:
-            print(f"   ⚠️ [Naver] .lotto_win_number 셀렉터 없음 (HTML 구조 변경 가능성)")
-        elif not round_text_el:
-            print(f"   ⚠️ [Naver] a._lotto-btn-current>em 셀렉터 없음 (HTML 구조 변경 가능성)")
-        elif str(target_round) not in round_text_el.text:
-            print(f"   ⚠️ [Naver] 회차 불일치: 검색결과='{round_text_el.text.strip()}', 요청={target_round}")
+        round_el = lotto_box.select_one('a._text') if lotto_box else None
+        if not lotto_box:
+            print(f"   ⚠️ [Naver] .cs_lotto 셀렉터 없음 (HTML 구조 변경 가능성)")
+        elif not round_el:
+            print(f"   ⚠️ [Naver] a._text 셀렉터 없음 (HTML 구조 변경 가능성)")
+        elif str(target_round) not in round_el.text:
+            print(f"   ⚠️ [Naver] 회차 불일치: 검색결과='{round_el.text.strip()}', 요청={target_round}")
         else:
-            balls = [int(b.text) for b in container.select('.ball')]
-            date_text = soup.select_one('.sub_title').text if soup.select_one('.sub_title') else ""
-            date_match = re.search(r'(\d{4})[./\-](\d{2})[./\-](\d{2})', date_text)
+            winning_nums = [int(b.text) for b in lotto_box.select('.winning_number span.ball')]
+            bonus_el = lotto_box.select_one('.bonus_number span.ball')
+            bonus_num = int(bonus_el.text) if bonus_el else None
+            # 날짜: "1214회차 (2026.03.07.)" 형식에서 추출
+            date_match = re.search(r'(\d{4})\.(\d{2})\.(\d{2})', round_el.text)
             date_str = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}" if date_match else today_str
-            if len(balls) >= 7:
+            if len(winning_nums) == 6 and bonus_num:
                 print("   ✅ [Naver] 데이터 확보 성공")
-                return {"round": target_round, "date": date_str, "numbers": balls[:6], "bonus": balls[6]}
+                return {"round": target_round, "date": date_str, "numbers": winning_nums, "bonus": bonus_num}
             else:
-                print(f"   ⚠️ [Naver] 볼 개수 부족: {len(balls)}개")
+                print(f"   ⚠️ [Naver] 번호 부족: 당첨={winning_nums}, 보너스={bonus_num}")
     except Exception as e:
         print(f"   ⚠️ [Naver] 실패: {e}")
 
-    # 3. Daum
+    # 3. Daum 검색 (새 HTML 구조: #lottoColl → .f_red 회차 확인, .prize에서 날짜)
     try:
         daum_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -118,19 +120,23 @@ def fetch_lotto_data(target_round):
         resp = requests.get(url, headers=daum_headers, timeout=20)
         soup = BeautifulSoup(resp.text, 'html.parser')
         box = soup.select_one('#lottoColl')
-        # 중요: 실제 검색 결과의 회차가 맞는지 검증
-        tit_tot = soup.select_one('.tit_tot')
+        # 중요: .tit_tot → .f_red 로 변경됨 (회차 정보)
+        round_el = box.select_one('.f_red') if box else None
         if not box:
             print(f"   ⚠️ [Daum] #lottoColl 셀렉터 없음 (HTML 구조 변경 가능성)")
-        elif not tit_tot:
-            print(f"   ⚠️ [Daum] .tit_tot 셀렉터 없음 (HTML 구조 변경 가능성)")
-        elif str(target_round) not in tit_tot.text:
-            print(f"   ⚠️ [Daum] 회차 불일치: 검색결과='{tit_tot.text.strip()[:30]}', 요청={target_round}")
+        elif not round_el:
+            print(f"   ⚠️ [Daum] .f_red 셀렉터 없음 (HTML 구조 변경 가능성)")
+        elif str(target_round) not in round_el.text:
+            print(f"   ⚠️ [Daum] 회차 불일치: 검색결과='{round_el.text.strip()[:30]}', 요청={target_round}")
         else:
             balls = [int(b.text) for b in box.select('.ball') if b.text.strip().isdigit()]
+            # 날짜: ".prize" 텍스트에서 "2026.03.07" 형식 추출
+            prize_el = box.select_one('.prize')
+            date_match = re.search(r'(\d{4})\.(\d{2})\.(\d{2})', prize_el.text if prize_el else '')
+            date_str = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}" if date_match else today_str
             if len(balls) >= 7:
                 print("   ✅ [Daum] 데이터 확보 성공")
-                return {"round": target_round, "date": today_str, "numbers": balls[:6], "bonus": balls[6]}
+                return {"round": target_round, "date": date_str, "numbers": balls[:6], "bonus": balls[6]}
             else:
                 print(f"   ⚠️ [Daum] 볼 개수 부족: {len(balls)}개")
     except Exception as e:
