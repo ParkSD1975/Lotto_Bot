@@ -34,7 +34,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          PYTHONUNBUFFERED: "1"   # Python 출력 버퍼링 해제 → 로그 실시간 표시
         run: |
-          # 파일명이 update_lotto.py인지 다시 한번 확인하세요.
-          # lotto_draws, number_round_stats, regression_details를 모두 업데이트합니다.
+          # lotto_draws, number_round_stats, regression_details, number_features_by_round 모두 업데이트
+          # 스케줄 실행(토요일): 최대 6회 재시도 / push·수동 실행: 1회만 시도
           python update_lotto.py

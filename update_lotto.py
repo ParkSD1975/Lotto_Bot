@@ -118,8 +118,17 @@ def main():
     supabase = create_client(url, key)
 
     # ── 재시도 설정 ──
-    MAX_RETRIES = 6       # 최대 6회 재시도
-    RETRY_INTERVAL = 600  # 10분(600초) 간격
+    # 토요일 스케줄 실행 시에만 재시도 (추첨 직후 데이터 미공개 대기용)
+    # push/workflow_dispatch 실행 시에는 1회만 시도 (이미 공개된 데이터 수집용)
+    event_name = os.environ.get("GITHUB_EVENT_NAME", "push")
+    if event_name == "schedule":
+        MAX_RETRIES = 6       # 최대 6회 재시도 (토요일 추첨 직후)
+        RETRY_INTERVAL = 600  # 10분(600초) 간격
+        print(f"⏰ [스케줄 실행] 재시도 모드: 최대 {MAX_RETRIES}회, {RETRY_INTERVAL//60}분 간격")
+    else:
+        MAX_RETRIES = 1       # 1회만 시도 (push/수동 실행)
+        RETRY_INTERVAL = 0
+        print(f"🔧 [{event_name} 실행] 단일 시도 모드 (재시도 없음)")
 
     # 1. 최신 회차 동기화
     res = supabase.table("lotto_draws").select("round").order("round", desc=True).limit(1).execute()
