@@ -112,31 +112,56 @@ def fetch_lotto_data(target_round):
 def main():
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_KEY")
-    if not url or not key: 
+    if not url or not key:
         print("❌ Supabase 환경변수 누락")
         return
     supabase = create_client(url, key)
+
+    # ── 재시도 설정 ──
+    MAX_RETRIES = 6       # 최대 6회 재시도
+    RETRY_INTERVAL = 600  # 10분(600초) 간격
 
     # 1. 최신 회차 동기화
     res = supabase.table("lotto_draws").select("round").order("round", desc=True).limit(1).execute()
     max_db = res.data[0]['round'] if res.data else 0
     target = max_db + 1
-    
+
     # 3회차 여유분 체크 (혹시 밀렸을 경우)
     for i in range(3):
         curr_target = target + i
         print(f"\n===== [ {curr_target}회차 작업 시작 ] =====")
-        
-        new_data = fetch_lotto_data(curr_target)
+
+        # 첫 번째 신규 회차(i==0)만 재시도 로직 적용
+        # 이후 회차(i>0)는 과거 누락 보충이므로 1회만 시도
+        retries = MAX_RETRIES if i == 0 else 1
+        new_data = None
+
+        for attempt in range(retries):
+            new_data = fetch_lotto_data(curr_target)
+            if new_data:
+                break
+            if attempt < retries - 1:
+                print(f"   ⏳ [{attempt + 1}/{retries}] {curr_target}회차 데이터 미공개."
+                      f" {RETRY_INTERVAL // 60}분 후 재시도... "
+                      f"({datetime.now().strftime('%H:%M:%S')})")
+                time.sleep(RETRY_INTERVAL)
+            else:
+                if i == 0:
+                    print(f"   ❌ {MAX_RETRIES}회 재시도 후에도 {curr_target}회차 데이터 없음."
+                          f" 다음 실행 시 처리됩니다.")
+                else:
+                    print(f"   🏁 {curr_target}회차 데이터 없음. 이후 회차 없음.")
+
         if new_data:
             try:
                 supabase.table("lotto_draws").upsert(new_data).execute()
-                print(f"   💾 lotto_draws 저장 완료")
-                max_db = curr_target # 업데이트 성공 시 기준점 이동
+                print(f"   💾 lotto_draws {curr_target}회차 저장 완료")
+                max_db = curr_target  # 업데이트 성공 시 기준점 이동
             except Exception as e:
                 print(f"   ℹ️ 저장 스킵: {e}")
         else:
-            print("   🏁 더 이상 새로운 회차가 없습니다.")
+            if i > 0:
+                print("   🏁 더 이상 새로운 회차가 없습니다.")
             break
 
     # 2. 분석용 데이터 벌크 로드 (과거 500회분 - 분석에 필요)
