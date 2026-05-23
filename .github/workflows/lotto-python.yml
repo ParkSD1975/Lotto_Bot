@@ -7,10 +7,13 @@ on:
   schedule:
     - cron: '0 12 * * 6'   # 매주 토요일 21:00 KST (UTC 12:00) - 추첨 직후 시작, 미공개시 Python 내부에서 10분 간격 최대 6회 재시도
 
+permissions:
+  contents: write
+
 jobs:
   update-db:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: 저장소 코드 가져오기 (Checkout)
         uses: actions/checkout@v3
@@ -39,3 +42,12 @@ jobs:
           # lotto_draws, number_round_stats, regression_details, number_features_by_round 모두 업데이트
           # 스케줄 실행(토요일): 최대 6회 재시도 / push·수동 실행: 1회만 시도
           python update_lotto.py
+
+      - name: Keepalive (60일 무활동 자동비활성화 방지)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .keepalive
+          git add .keepalive
+          git commit -m "chore: keepalive heartbeat [skip ci]" || echo "변경 없음"
+          git push
